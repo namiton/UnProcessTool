@@ -4,7 +4,10 @@
     ファイル/フォルダをロックしているプロセスを特定し、選択して終了する
 .DESCRIPTION
     Windows 標準の Restart Manager API (rstrtmgr.dll) を使用してロック元プロセスを検出する。
-    外部ツール (handle.exe 等) は不要。
+    フォルダ指定時は、フォルダをカレントディレクトリとして掴んでいるプロセス
+    (cmd / PowerShell で cd しているだけのケース) も PEB 読み取りで検出する。
+    終了時はまず通常終了 (RmShutdown による graceful shutdown) を試み、
+    残ったプロセスのみ確認のうえ強制終了する。外部ツール (handle.exe 等) は不要。
 .EXAMPLE
     .\UnProcessTool.ps1 -Path "D:\MyProject\Binaries\Win64"
 .EXAMPLE
@@ -15,7 +18,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Path,
 
-    # 確認なしで検出した全プロセスを終了する
+    # 確認なしで検出した全プロセスを即強制終了する (graceful 終了はスキップ)
     [switch]$Force,
 
     # 一覧表示のみ（終了しない）
@@ -30,6 +33,7 @@ $ErrorActionPreference = 'Stop'
 $rmSource = @"
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace UnProcessTool
@@ -78,6 +82,9 @@ namespace UnProcessTool
         [DllImport("rstrtmgr.dll")]
         private static extern int RmGetList(uint dwSessionHandle, out uint pnProcInfoNeeded, ref uint pnProcInfo,
             [In, Out] RM_PROCESS_INFO[] rgAffectedApps, ref uint lpdwRebootReasons);
+
+        [DllImport("rstrtmgr.dll")]
+        private static extern int RmShutdown(uint pSessionHandle, uint lActionFlags, IntPtr fnStatus);
 
         private const int ERROR_MORE_DATA = 234;
 
@@ -141,6 +148,148 @@ namespace UnProcessTool
                 RmEndSession(handle);
             }
         }
+
+        // 指定したプロセスのみを Restart Manager に登録し、通常終了 (graceful shutdown) を試みる。
+        // 保存確認ダイアログを出せるアプリはユーザーの応答を待つ。戻り値は RmShutdown のエラーコード。
+        public static int GracefulShutdown(int[] pids)
+        {
+            var apps = new List<RM_UNIQUE_PROCESS>();
+            foreach (int pid in pids)
+            {
+                try
+                {
+                    var p = Process.GetProcessById(pid);
+                    long ft = p.StartTime.ToFileTime();
+                    var u = new RM_UNIQUE_PROCESS();
+                    u.dwProcessId = pid;
+                    u.ProcessStartTime.dwLowDateTime = (int)(ft & 0xFFFFFFFF);
+                    u.ProcessStartTime.dwHighDateTime = (int)(ft >> 32);
+                    apps.Add(u);
+                }
+                catch { } // 開始時刻を取得できないプロセスは graceful 対象外 (呼び出し側で生存確認される)
+            }
+            if (apps.Count == 0) return -1;
+
+            uint handle;
+            string key = Guid.NewGuid().ToString();
+            int res = RmStartSession(out handle, 0, key);
+            if (res != 0) throw new Exception("RmStartSession failed: " + res);
+            try
+            {
+                res = RmRegisterResources(handle, 0, null, (uint)apps.Count, apps.ToArray(), 0, null);
+                if (res != 0) throw new Exception("RmRegisterResources failed: " + res);
+                return RmShutdown(handle, 0, IntPtr.Zero); // 0 = 強制終了しない (graceful のみ)
+            }
+            finally
+            {
+                RmEndSession(handle);
+            }
+        }
+    }
+
+    // 各プロセスのカレントディレクトリを PEB (RTL_USER_PROCESS_PARAMETERS) から読み取る。
+    // Restart Manager では検出できない「フォルダに cd しているだけ」のロックを検出するために使う。
+    public static class CwdScanner
+    {
+        private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+        private const uint PROCESS_VM_READ = 0x0010;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_BASIC_INFORMATION
+        {
+            public IntPtr Reserved1;
+            public IntPtr PebBaseAddress;
+            public IntPtr Reserved2_0;
+            public IntPtr Reserved2_1;
+            public IntPtr UniqueProcessId;
+            public IntPtr Reserved3;
+        }
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationProcess(IntPtr hProcess, int infoClass,
+            ref PROCESS_BASIC_INFORMATION pbi, int size, out int retLen);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationProcess(IntPtr hProcess, int infoClass,
+            ref IntPtr info, int size, out int retLen);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buffer, IntPtr size, out IntPtr read);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr h);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool IsWow64Process(IntPtr h, out bool wow64);
+
+        private static byte[] ReadMem(IntPtr h, IntPtr addr, int len)
+        {
+            var buf = new byte[len];
+            IntPtr read;
+            if (!ReadProcessMemory(h, addr, buf, (IntPtr)len, out read) || read.ToInt64() != len) return null;
+            return buf;
+        }
+
+        // 対象プロセスのカレントディレクトリを返す。取得できない場合 (権限不足等) は null。
+        public static string GetProcessCwd(int pid)
+        {
+            if (!Environment.Is64BitProcess) return null; // 64bit ホスト前提 (オフセットが x64 固定のため)
+
+            IntPtr h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+            if (h == IntPtr.Zero) return null;
+            try
+            {
+                bool wow64;
+                if (!IsWow64Process(h, out wow64)) return null;
+
+                if (wow64)
+                {
+                    // 32bit プロセス: PEB32 -> ProcessParameters(+0x10) -> CurrentDirectory(+0x24, UNICODE_STRING32)
+                    IntPtr peb32 = IntPtr.Zero;
+                    int retLen;
+                    if (NtQueryInformationProcess(h, 26 /*ProcessWow64Information*/, ref peb32, IntPtr.Size, out retLen) != 0
+                        || peb32 == IntPtr.Zero) return null;
+                    var buf = ReadMem(h, (IntPtr)(peb32.ToInt64() + 0x10), 4);
+                    if (buf == null) return null;
+                    uint pp = BitConverter.ToUInt32(buf, 0);
+                    if (pp == 0) return null;
+                    buf = ReadMem(h, (IntPtr)pp + 0x24, 8);
+                    if (buf == null) return null;
+                    ushort len = BitConverter.ToUInt16(buf, 0);
+                    uint strPtr = BitConverter.ToUInt32(buf, 4);
+                    if (len == 0 || strPtr == 0 || len > 65534) return null;
+                    buf = ReadMem(h, (IntPtr)strPtr, len);
+                    if (buf == null) return null;
+                    return System.Text.Encoding.Unicode.GetString(buf);
+                }
+                else
+                {
+                    // 64bit プロセス: PEB -> ProcessParameters(+0x20) -> CurrentDirectory(+0x38, UNICODE_STRING)
+                    var pbi = new PROCESS_BASIC_INFORMATION();
+                    int retLen;
+                    if (NtQueryInformationProcess(h, 0 /*ProcessBasicInformation*/, ref pbi,
+                        Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out retLen) != 0) return null;
+                    if (pbi.PebBaseAddress == IntPtr.Zero) return null;
+                    var buf = ReadMem(h, (IntPtr)(pbi.PebBaseAddress.ToInt64() + 0x20), 8);
+                    if (buf == null) return null;
+                    long pp = BitConverter.ToInt64(buf, 0);
+                    if (pp == 0) return null;
+                    buf = ReadMem(h, (IntPtr)(pp + 0x38), 16);
+                    if (buf == null) return null;
+                    ushort len = BitConverter.ToUInt16(buf, 0);
+                    long strPtr = BitConverter.ToInt64(buf, 8);
+                    if (len == 0 || strPtr == 0 || len > 65534) return null;
+                    buf = ReadMem(h, (IntPtr)strPtr, len);
+                    if (buf == null) return null;
+                    return System.Text.Encoding.Unicode.GetString(buf);
+                }
+            }
+            catch { return null; }
+            finally { CloseHandle(h); }
+        }
     }
 }
 "@
@@ -170,7 +319,29 @@ function Find-Lockers([string[]]$TargetFiles) {
             Name    = $proc.ProcessName
             AppName = $l.AppName
             Type    = $l.AppType
-            ExePath = try { $proc.Path } catch { $null }
+            ExePath = $(try { $proc.Path } catch { $null })
+            Reason  = 'ファイルハンドル'
+        }
+    }
+    return @($list)
+}
+
+# フォルダをカレントディレクトリとして掴んでいるプロセスを検出する
+function Find-CwdLockers([string]$FolderPath) {
+    $root = $FolderPath.TrimEnd('\') + '\'
+    $list = foreach ($proc in Get-Process -ErrorAction SilentlyContinue) {
+        if ($proc.Id -eq $PID) { continue }
+        $cwd = [UnProcessTool.CwdScanner]::GetProcessCwd($proc.Id)
+        if (-not $cwd) { continue }
+        $norm = $cwd.TrimEnd('\') + '\'
+        if (-not $norm.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        [pscustomobject]@{
+            Pid     = $proc.Id
+            Name    = $proc.ProcessName
+            AppName = $proc.ProcessName
+            Type    = 'Cwd'
+            ExePath = $(try { $proc.Path } catch { $null })
+            Reason  = "カレントディレクトリ ($($cwd.TrimEnd('\')))"
         }
     }
     return @($list)
@@ -198,21 +369,29 @@ try {
         $files = @($item.FullName)
     }
 
-    if ($files.Count -eq 0) {
-        Write-Host "フォルダ内に検査対象ファイルがありません（空フォルダ）。" -ForegroundColor Yellow
-        Write-Host "空フォルダが削除できない場合は、cmd / PowerShell / エクスプローラーがこのフォルダを開いている（カレントディレクトリにしている）可能性があります。"
-        Exit-Tool 0
-    }
-
-    # ---- ロック元検出 ----
+    # ---- ロック元検出 (ファイルハンドル経由) ----
     Write-Host "ロックしているプロセスを検索中... ($($files.Count) ファイル)"
     $lockers = @(Find-Lockers $files)
+
+    # ---- ロック元検出 (カレントディレクトリ経由、フォルダ指定時のみ) ----
+    if ($item.PSIsContainer) {
+        Write-Host "カレントディレクトリとして掴んでいるプロセスを検索中..."
+        foreach ($c in @(Find-CwdLockers $item.FullName)) {
+            $existing = $lockers | Where-Object { $_.Pid -eq $c.Pid }
+            if ($existing) {
+                $existing.Reason = "$($existing.Reason) + カレントディレクトリ"
+            }
+            else {
+                $lockers += $c
+            }
+        }
+    }
 
     if ($lockers.Count -eq 0) {
         Write-Host "`nロックしているプロセスは見つかりませんでした。" -ForegroundColor Green
         Write-Host "それでも削除できない場合、次の可能性があります:"
-        Write-Host "  - cmd / PowerShell がこのフォルダをカレントディレクトリにしている"
         Write-Host "  - 管理者権限のプロセスが掴んでいる（このツールを管理者として再実行すると検出できる場合あり）"
+        Write-Host "  - 別ユーザーのプロセスやネットワーク経由 (SMB) のアクセスが掴んでいる"
         Exit-Tool 0
     }
 
@@ -220,6 +399,7 @@ try {
     for ($i = 0; $i -lt $lockers.Count; $i++) {
         $l = $lockers[$i]
         Write-Host ("  [{0}] PID {1,-7} {2}  ({3} / {4})" -f ($i + 1), $l.Pid, $l.AppName, $l.Name, $l.Type)
+        Write-Host ("        ロック方法: {0}" -f $l.Reason) -ForegroundColor DarkYellow
         if ($l.ExePath) { Write-Host ("        {0}" -f $l.ExePath) -ForegroundColor DarkGray }
     }
 
@@ -248,14 +428,47 @@ try {
         }
     }
 
-    # ---- プロセス終了 ----
+    $explorerInTargets = [bool]($targets | Where-Object { $_.Name -ieq 'explorer' })
+
+    # ---- Phase 1: 通常終了 (graceful shutdown)。-Force 時はスキップ ----
+    if (-not $Force) {
+        Write-Host "`nまず通常終了を試みます。保存確認ダイアログが表示された場合は応答してください..."
+        try {
+            [void][UnProcessTool.RestartManager]::GracefulShutdown([int[]]@($targets | ForEach-Object { $_.Pid }))
+        }
+        catch {
+            Write-Host "通常終了の呼び出しに失敗しました: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+        Start-Sleep -Milliseconds 500
+
+        $survivors = @($targets | Where-Object { Get-Process -Id $_.Pid -ErrorAction SilentlyContinue })
+        foreach ($t in @($targets | Where-Object { -not (Get-Process -Id $_.Pid -ErrorAction SilentlyContinue) })) {
+            Write-Host "終了しました (通常終了): PID $($t.Pid) $($t.Name)" -ForegroundColor Green
+        }
+
+        if ($survivors.Count -gt 0) {
+            Write-Host "`n通常終了できなかったプロセス ($($survivors.Count) 件):" -ForegroundColor Yellow
+            $survivors | ForEach-Object { Write-Host "  PID $($_.Pid) $($_.Name)" }
+            $confirm = Read-Host "これらを強制終了しますか? (y/N)"
+            if ($confirm -match '^[yY]') {
+                $targets = $survivors
+            }
+            else {
+                Write-Host "強制終了はキャンセルしました。"
+                $targets = @()
+            }
+        }
+        else {
+            $targets = @()
+        }
+    }
+
+    # ---- Phase 2: 強制終了 ($Force 時は全件、それ以外は graceful 後の生存プロセスのみ) ----
     $failed = @()
-    $explorerKilled = $false
     foreach ($t in $targets) {
         try {
             Stop-Process -Id $t.Pid -Force -ErrorAction Stop
-            Write-Host "終了しました: PID $($t.Pid) $($t.Name)" -ForegroundColor Green
-            if ($t.Name -ieq 'explorer') { $explorerKilled = $true }
+            Write-Host "終了しました (強制): PID $($t.Pid) $($t.Name)" -ForegroundColor Green
         }
         catch {
             Write-Host "終了できませんでした: PID $($t.Pid) $($t.Name) - $($_.Exception.Message)" -ForegroundColor Red
@@ -264,7 +477,7 @@ try {
     }
 
     # explorer を終了した場合は自動で再起動する
-    if ($explorerKilled) {
+    if ($explorerInTargets) {
         Start-Sleep -Milliseconds 800
         if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
             Start-Process explorer.exe
@@ -289,12 +502,17 @@ try {
     # ---- 再チェック ----
     Start-Sleep -Milliseconds 800
     $remaining = @(Find-Lockers $files)
+    if ($item.PSIsContainer) {
+        foreach ($c in @(Find-CwdLockers $item.FullName)) {
+            if (-not ($remaining | Where-Object { $_.Pid -eq $c.Pid })) { $remaining += $c }
+        }
+    }
     if ($remaining.Count -eq 0) {
         Write-Host "`nロックはすべて解除されました。" -ForegroundColor Green
     }
     else {
         Write-Host "`nまだ $($remaining.Count) 件のプロセスがロックしています:" -ForegroundColor Yellow
-        $remaining | ForEach-Object { Write-Host "  PID $($_.Pid) $($_.AppName)" }
+        $remaining | ForEach-Object { Write-Host "  PID $($_.Pid) $($_.AppName) [$($_.Reason)]" }
     }
     Exit-Tool 0
 }

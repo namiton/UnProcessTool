@@ -30,24 +30,25 @@
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
 
-      <!-- per-user インストールのため各ファイルコンポーネントの KeyPath は HKCU レジストリ値にする (ICE38 対応) -->
-      <Component Id="MainScript">
+      <!-- per-user インストールのため各ファイルコンポーネントの KeyPath は HKCU レジストリ値にする (ICE38 対応)。
+           レジストリ KeyPath + ファイル同居コンポーネントは GUID 自動生成不可 (WIX0230) のため明示指定 -->
+      <Component Id="MainScript" Guid="AA3FC215-2EA4-4026-8BEA-A5D117C27854">
         <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="MainScript" Type="integer" Value="1" KeyPath="yes" />
         <File Id="UnProcessToolPs1" Source="..\UnProcessTool.ps1" />
         <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
       </Component>
 
-      <Component Id="InstallMenuScript">
+      <Component Id="InstallMenuScript" Guid="7A2EC48F-8073-4A32-AE80-2E456F82415C">
         <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="InstallMenuScript" Type="integer" Value="1" KeyPath="yes" />
         <File Id="InstallContextMenuPs1" Source="..\Install-ContextMenu.ps1" />
       </Component>
 
-      <Component Id="UninstallMenuScript">
+      <Component Id="UninstallMenuScript" Guid="3DFBD727-D889-4248-82FF-4C2B79045C3D">
         <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="UninstallMenuScript" Type="integer" Value="1" KeyPath="yes" />
         <File Id="UninstallContextMenuPs1" Source="..\Uninstall-ContextMenu.ps1" />
       </Component>
 
-      <Component Id="ReadmeFile">
+      <Component Id="ReadmeFile" Guid="62F06B59-5B81-471D-83C9-08B8ED3A2604">
         <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="ReadmeFile" Type="integer" Value="1" KeyPath="yes" />
         <File Id="ReadmeMd" Source="..\README.md" />
       </Component>

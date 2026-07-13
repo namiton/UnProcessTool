@@ -1,0 +1,6 @@
+dist/
+*.msi
+*.wixobj
+*.wixpdb
+obj/
+bin/

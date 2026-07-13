@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- UnProcessTool MSI 定義 (WiX v5)
+     per-user インストール: LocalAppData\Programs\UnProcessTool + HKCU レジストリのみ。UAC 不要。
+     コンテキストメニュー登録もインストーラが行い、アンインストールで自動削除される。 -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <?ifndef ProductVersion ?>
+    <?define ProductVersion = "1.0.0" ?>
+  <?endif?>
+
+  <Package Name="UnProcessTool"
+           Manufacturer="namiton"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="C409C0DB-9F03-455A-A1FB-0BA8B0A8424C"
+           Scope="perUser"
+           Language="1041"
+           Codepage="932"
+           Compressed="yes">
+
+    <SummaryInformation Description="UnProcessTool - ファイル/フォルダをロックしているプロセスを特定して終了するツール" />
+
+    <MajorUpgrade DowngradeErrorMessage="新しいバージョンが既にインストールされています。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="UnProcessTool" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+
+      <!-- per-user インストールのため各ファイルコンポーネントの KeyPath は HKCU レジストリ値にする (ICE38 対応) -->
+      <Component Id="MainScript">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="MainScript" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="UnProcessToolPs1" Source="..\UnProcessTool.ps1" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      </Component>
+
+      <Component Id="InstallMenuScript">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="InstallMenuScript" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="InstallContextMenuPs1" Source="..\Install-ContextMenu.ps1" />
+      </Component>
+
+      <Component Id="UninstallMenuScript">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="UninstallMenuScript" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="UninstallContextMenuPs1" Source="..\Uninstall-ContextMenu.ps1" />
+      </Component>
+
+      <Component Id="ReadmeFile">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="ReadmeFile" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="ReadmeMd" Source="..\README.md" />
+      </Component>
+
+      <!-- 右クリックメニュー: 全ファイル (*) -->
+      <Component Id="ContextMenuAllFiles">
+        <RegistryKey Root="HKCU" Key="Software\Classes\*\shell\UnProcessTool">
+          <RegistryValue Type="string" Value="ロックしているプロセスを調査 (UnProcessTool)" KeyPath="yes" />
+          <RegistryValue Name="Icon" Type="string" Value="taskmgr.exe" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]UnProcessTool.ps1&quot; -Pause -Path &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+      </Component>
+
+      <!-- 右クリックメニュー: フォルダ -->
+      <Component Id="ContextMenuDirectory">
+        <RegistryKey Root="HKCU" Key="Software\Classes\Directory\shell\UnProcessTool">
+          <RegistryValue Type="string" Value="ロックしているプロセスを調査 (UnProcessTool)" KeyPath="yes" />
+          <RegistryValue Name="Icon" Type="string" Value="taskmgr.exe" />
+          <RegistryKey Key="command">
+            <RegistryValue Type="string" Value="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]UnProcessTool.ps1&quot; -Pause -Path &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
+      </Component>
+
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="UnProcessTool">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+
+  </Package>
+</Wix>

@@ -14,7 +14,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install WiX
-        run: dotnet tool install --global wix
+        # v6 以降は OSMF (Open Source Maintenance Fee) EULA 同意が必要なため v5 系に固定
+        run: dotnet tool install --global wix --version 5.0.2
 
       - name: Determine version
         id: ver

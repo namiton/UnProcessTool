@@ -85,7 +85,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "d:\OriginalTool\UnProcessTo
 ローカルでビルドする場合は [WiX Toolset](https://wixtoolset.org/) の .NET ツールが必要：
 
 ```powershell
-dotnet tool install --global wix
+# v5 系を指定（v6 以降は OSMF EULA 同意が必要）
+dotnet tool install --global wix --version 5.0.2
 .\build-msi.ps1 -Version 1.0.0
 # → dist\UnProcessTool-1.0.0.msi
 ```

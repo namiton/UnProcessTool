@@ -1,6 +1,6 @@
 #Requires -Version 5.1
-# Build the MSI locally. Requires the WiX .NET tool:
-#   dotnet tool install --global wix
+# Build the MSI locally. Requires the WiX .NET tool (v5; v6+ requires the OSMF EULA):
+#   dotnet tool install --global wix --version 5.0.2
 param(
     [string]$Version = '1.0.0'
 )
@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Write-Host "WiX toolset not found. Install it with:" -ForegroundColor Yellow
-    Write-Host "  dotnet tool install --global wix"
+    Write-Host "  dotnet tool install --global wix --version 5.0.2"
     exit 1
 }
 

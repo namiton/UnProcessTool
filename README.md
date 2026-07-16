@@ -18,8 +18,21 @@ Windows 標準の **Restart Manager API** (`rstrtmgr.dll`) を使うため、han
 
 インストール後、ファイル/フォルダを右クリック → **「ロックしているプロセスを調査 (UnProcessTool)」** で起動。
 
-> Windows 11 の新しい右クリックメニューには表示されない（パッケージアプリ限定のため）。
+> Windows 11 の新しい右クリックメニューには表示されない（署名付きパッケージアプリ限定のため）。
 > **「その他のオプションを確認」** をクリックするか、対象を選択して **Shift+F10** で従来メニューを開くと表示される。
+
+### 1クリックで出したい場合（クラシックメニュー復元）
+
+同梱の `Enable-ClassicContextMenu.ps1` を実行すると、Windows 11 の右クリックメニューが従来型に戻り、
+UnProcessTool が常に1クリック目で表示されるようになる（システム全体の右クリックが旧デザインになる点に注意）。
+
+```powershell
+# 有効化 (HKCU のみ、管理者権限不要。エクスプローラー再起動で反映)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%LocalAppData%\Programs\UnProcessTool\Enable-ClassicContextMenu.ps1"
+
+# 元に戻す
+powershell -NoProfile -ExecutionPolicy Bypass -File "%LocalAppData%\Programs\UnProcessTool\Disable-ClassicContextMenu.ps1"
+```
 
 ## ファイル構成
 
@@ -29,6 +42,8 @@ Windows 標準の **Restart Manager API** (`rstrtmgr.dll`) を使うため、han
 | `LaunchGui.vbs` | コンテキストメニュー用ランチャー（コンソールウィンドウなしで GUI を起動） |
 | `Install-ContextMenu.ps1` | 右クリックメニューに登録（MSI を使わない場合の手動登録用） |
 | `Uninstall-ContextMenu.ps1` | 右クリックメニューから削除（手動登録の解除用） |
+| `Enable-ClassicContextMenu.ps1` | Win11 の右クリックを従来型に戻す（1クリックでメニュー表示、任意） |
+| `Disable-ClassicContextMenu.ps1` | 右クリックを Win11 標準に戻す |
 | `wix/Package.wxs` | MSI 定義（WiX v5） |
 | `build-msi.ps1` | ローカルで MSI をビルドするスクリプト |
 | `.github/workflows/release.yml` | タグ push で MSI をビルドし Release に添付する CI |
@@ -50,10 +65,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "d:\OriginalTool\UnProcessTo
 
 右クリック → 「ロックしているプロセスを調査 (UnProcessTool)」で File Locksmith 風の GUI が開く：
 
-- ロック元プロセスをカード表示（プロセス名 / PID / ユーザー / ロック方法 / 実行ファイルパス）
+- ロック元プロセスをカード表示（実行ファイルの実アイコン / プロセス名 / PID / ユーザー / ロック方法 / パス）
 - **「ロック中のファイル」を展開すると、そのプロセスが掴んでいるファイルを特定して表示**（二分探索による絞り込み）
-- 「タスクの終了」ボタン: まず通常終了（保存ダイアログを出せる graceful shutdown）→ 4 秒で終了しなければ自動で強制終了
+- 「タスクの終了」ボタン:
+  - ウィンドウを持たないプロセス（ビルドツール・常駐シェル等）は**即時に強制終了**（体感 0.3 秒以下）
+  - ウィンドウを持つアプリには閉じる要求（WM_CLOSE）を送り保存ダイアログの猶予を確保。3 秒応答がなければ自動では殺さず「強制終了」ボタンに切り替わる（未保存データ保護）
 - 「すべて終了」「更新」「管理者として再実行」（権限不足のプロセスがある場合）
+- **ライト/ダークテーマ対応** — システムのアプリテーマ設定に自動追従（`-Theme light|dark` で強制可能）
+- Windows 11 の Mica バックドロップ・角丸・Fluent アイコン
 - スキャンや終了処理はバックグラウンド実行で、UI は固まらない
 
 ## コマンドラインでの使い方
@@ -76,6 +95,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "d:\OriginalTool\UnProcessTo
 |---|---|
 | `-Path` | 対象のファイルまたはフォルダ。フォルダの場合は配下のファイルを再帰的に検査（上限 3000 件） |
 | `-Gui` | GUI (WPF) で表示。コンテキストメニューからはこのモードで起動される |
+| `-Theme` | GUI のテーマ (`auto` / `light` / `dark`)。既定はシステム設定に追従 |
 | `-ListOnly` | 検出のみで終了しない（コンソールモード） |
 | `-Force` | 確認プロンプトなしで全プロセスを終了（コンソールモード） |
 | `-Pause` | 終了前に Enter 待ち（コンソールモード） |

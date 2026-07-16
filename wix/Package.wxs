@@ -59,6 +59,16 @@
         <File Id="LaunchGuiVbs" Source="$(sys.SOURCEFILEDIR)..\LaunchGui.vbs" />
       </Component>
 
+      <Component Id="ClassicMenuEnable" Guid="B902C78A-CAD8-4EE7-8155-D072442CDE25">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="ClassicMenuEnable" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="EnableClassicMenuPs1" Source="$(sys.SOURCEFILEDIR)..\Enable-ClassicContextMenu.ps1" />
+      </Component>
+
+      <Component Id="ClassicMenuDisable" Guid="D36E1D04-9AE0-4958-84ED-6096160EEB51">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="ClassicMenuDisable" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="DisableClassicMenuPs1" Source="$(sys.SOURCEFILEDIR)..\Disable-ClassicContextMenu.ps1" />
+      </Component>
+
       <!-- 右クリックメニュー: 全ファイル (*) -->
       <Component Id="ContextMenuAllFiles">
         <RegistryKey Root="HKCU" Key="Software\Classes\*\shell\UnProcessTool">

@@ -31,6 +31,10 @@ param(
     # 終了前にキー入力を待つ（コンソールモード用）
     [switch]$Pause,
 
+    # GUI テーマ。auto はシステム設定 (アプリのダーク/ライト) に追従
+    [ValidateSet('auto', 'light', 'dark')]
+    [string]$Theme = 'auto',
+
     # 指定秒後にウィンドウを自動で閉じる (GUI の自動テスト用)
     [int]$AutoCloseSec = 0
 )
@@ -382,6 +386,11 @@ function Test-IsAdmin {
 # GUI モード (File Locksmith 風 / デザインは design-md/microsoft/DESIGN.md 準拠)
 # Windows 11 スタイル: Mica バックドロップ + カスタムタイトルバー + Fluent アイコン
 # ============================================================================
+# ============================================================================
+# GUI モード (File Locksmith 風 / デザインは design-md/microsoft/DESIGN.md 準拠)
+# Windows 11 スタイル: Mica バックドロップ + カスタムタイトルバー + Fluent アイコン
+# ライト/ダークテーマ対応 (auto はシステムのアプリテーマに追従)
+# ============================================================================
 function Show-Gui {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing
 
@@ -406,6 +415,39 @@ namespace UnProcessTool
     }
     $item = Get-Item -LiteralPath $Path -Force
     $targetPath = $item.FullName
+
+    # ---- テーマ決定 ----
+    $sysAppsLight = 1
+    try {
+        $sysAppsLight = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop).AppsUseLightTheme
+    }
+    catch { }
+    $script:IsDark = switch ($Theme) {
+        'dark' { $true }
+        'light' { $false }
+        default { $sysAppsLight -eq 0 }
+    }
+    # Mica はシステムテーマと表示テーマが一致するときのみ (不一致だと Mica の色調が合わない)
+    $script:UseMica = ($script:IsDark -eq ($sysAppsLight -eq 0))
+
+    # カラートークン: ライトは DESIGN.md (microsoft) の値そのまま。
+    # ダークは同じロールを Fluent ダークのニュートラルに写像 (アクセント青は共通トークン)
+    $T = if ($script:IsDark) {
+        @{
+            BG = '#202020'; CARD = '#2B2B2B'; INK = '#FFFFFF'; MUTED = '#ABABAB'
+            BORDER = '#3D3D3D'; SURFACE = '#252525'; HOVERFILL = '#383838'; TRACK = '#3D3D3D'
+            THUMB = '#5C5C5C'; CAPHOVER = '#1FFFFFFF'; GREEN = '#6CCB5F'; ICONBG = '#383838'
+            BLUE = '#0067B8'; BLUEB = '#0078D4'
+        }
+    }
+    else {
+        @{
+            BG = '#F5F5F5'; CARD = '#FFFFFF'; INK = '#1A1A1A'; MUTED = '#616161'
+            BORDER = '#D1D1D1'; SURFACE = '#FAFAFA'; HOVERFILL = '#F5F5F5'; TRACK = '#F2F2F2'
+            THUMB = '#C6C6C6'; CAPHOVER = '#14000000'; GREEN = '#107C10'; ICONBG = '#F5F5F5'
+            BLUE = '#0067B8'; BLUEB = '#0078D4'
+        }
+    }
 
     # ---- バックグラウンド実行スクリプト (runspace 用) ----
     $scanScript = @'
@@ -480,21 +522,6 @@ catch { $sync.FileMapError = $_.Exception.Message }
 $sync.FileMapDone = $true
 '@
 
-    # graceful shutdown -> 4 秒待って生きていれば強制終了
-    $killScript = @'
-param($targetPid)
-try { [void][UnProcessTool.RestartManager]::GracefulShutdown([int[]]@([int]$targetPid)) } catch { }
-$deadline = (Get-Date).AddSeconds(4)
-$alive = $true
-while ($alive -and (Get-Date) -lt $deadline) {
-    $alive = [bool](Get-Process -Id $targetPid -ErrorAction SilentlyContinue)
-    if ($alive) { Start-Sleep -Milliseconds 200 }
-}
-if ($alive) {
-    try { Stop-Process -Id $targetPid -Force -ErrorAction Stop } catch { }
-}
-'@
-
     $script:BgTasks = [System.Collections.ArrayList]::new()
 
     function New-BgTask {
@@ -515,26 +542,26 @@ if ($alive) {
         return $task
     }
 
-    # ---- XAML (トークンは DESIGN.md: microsoft のカラーロール/タイポ/スペーシングに準拠) ----
+    # ---- XAML (%TOKEN% をテーマ値に置換してからパースする) ----
     $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="UnProcessTool" Width="720" Height="760" MinWidth="560" MinHeight="440"
-        Background="#F5F5F5" WindowStartupLocation="CenterScreen"
+        WindowStyle="None" Background="%BG%" WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI Variable Text, Segoe UI" UseLayoutRounding="True"
         SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
   <WindowChrome.WindowChrome>
-    <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="-1" UseAeroCaptionButtons="False"/>
+    <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="%GLASS%" UseAeroCaptionButtons="False"/>
   </WindowChrome.WindowChrome>
   <Window.Resources>
-    <SolidColorBrush x:Key="Ink" Color="#1A1A1A"/>
-    <SolidColorBrush x:Key="Muted" Color="#616161"/>
-    <SolidColorBrush x:Key="BorderTok" Color="#D1D1D1"/>
-    <SolidColorBrush x:Key="Surface" Color="#FAFAFA"/>
-    <SolidColorBrush x:Key="Gray050" Color="#F5F5F5"/>
-    <SolidColorBrush x:Key="Gray100" Color="#F2F2F2"/>
-    <SolidColorBrush x:Key="Blue" Color="#0067B8"/>
-    <SolidColorBrush x:Key="BlueBright" Color="#0078D4"/>
+    <SolidColorBrush x:Key="Ink" Color="%INK%"/>
+    <SolidColorBrush x:Key="Muted" Color="%MUTED%"/>
+    <SolidColorBrush x:Key="BorderTok" Color="%BORDER%"/>
+    <SolidColorBrush x:Key="Surface" Color="%SURFACE%"/>
+    <SolidColorBrush x:Key="HoverFill" Color="%HOVERFILL%"/>
+    <SolidColorBrush x:Key="CardBg" Color="%CARD%"/>
+    <SolidColorBrush x:Key="Blue" Color="%BLUE%"/>
+    <SolidColorBrush x:Key="BlueBright" Color="%BLUEB%"/>
 
     <Style x:Key="CaptionButton" TargetType="Button">
       <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
@@ -552,7 +579,7 @@ if ($alive) {
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="bd" Property="Background" Value="#14000000"/>
+                <Setter TargetName="bd" Property="Background" Value="%CAPHOVER%"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -606,7 +633,7 @@ if ($alive) {
     </Style>
 
     <Style x:Key="SecondaryButton" TargetType="Button">
-      <Setter Property="Background" Value="#FFFFFF"/>
+      <Setter Property="Background" Value="{StaticResource CardBg}"/>
       <Setter Property="Foreground" Value="{StaticResource Ink}"/>
       <Setter Property="FontSize" Value="13"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
@@ -622,7 +649,7 @@ if ($alive) {
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="bd" Property="Background" Value="{StaticResource Gray050}"/>
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource HoverFill}"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
@@ -658,7 +685,7 @@ if ($alive) {
                   <Thumb>
                     <Thumb.Template>
                       <ControlTemplate TargetType="Thumb">
-                        <Border Background="#C6C6C6" CornerRadius="4" Margin="2,0"/>
+                        <Border Background="%THUMB%" CornerRadius="4" Margin="2,0"/>
                       </ControlTemplate>
                     </Thumb.Template>
                   </Thumb>
@@ -684,7 +711,7 @@ if ($alive) {
     <Grid Grid.Row="0">
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="18,0,0,0">
         <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14"
-                   Foreground="{StaticResource Blue}" VerticalAlignment="Center"/>
+                   Foreground="{StaticResource BlueBright}" VerticalAlignment="Center"/>
         <TextBlock Text="UnProcessTool" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Ink}"
                    Margin="10,0,0,0" VerticalAlignment="Center"/>
       </StackPanel>
@@ -702,7 +729,7 @@ if ($alive) {
 
     <ProgressBar x:Name="ScanProgress" Grid.Row="2" Height="3" Margin="24,0,24,10"
                  IsIndeterminate="True" Foreground="{StaticResource BlueBright}"
-                 Background="{StaticResource Gray100}" BorderThickness="0"/>
+                 Background="%TRACK%" BorderThickness="0"/>
 
     <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Padding="24,2,24,0" Background="Transparent">
       <StackPanel x:Name="ProcList" Margin="0,0,0,16"/>
@@ -737,6 +764,11 @@ if ($alive) {
 </Window>
 '@
 
+    foreach ($key in $T.Keys) { $xaml = $xaml.Replace("%$key%", $T[$key]) }
+    # 全面グラス拡張 (-1) は Mica 透過時のみ。非 Mica では DWM 標準のキャプションボタンが
+    # クライアント領域の上に露出するため 0 にする (表示後の変更は再適用されないためここで焼き込む)
+    $xaml = $xaml.Replace('%GLASS%', $(if ($script:UseMica) { '-1' } else { '0' }))
+
     $window = [Windows.Markup.XamlReader]::Parse($xaml)
     $tbTitle = $window.FindName('TitlePath')
     $tbStatus = $window.FindName('StatusText')
@@ -749,12 +781,12 @@ if ($alive) {
     $btnClose = $window.FindName('BtnClose')
 
     $bc = New-Object System.Windows.Media.BrushConverter
-    $brInk = $bc.ConvertFromString('#1A1A1A')
-    $brMuted = $bc.ConvertFromString('#616161')
-    $brBorder = $bc.ConvertFromString('#D1D1D1')
-    $brWhite = $bc.ConvertFromString('#FFFFFF')
-    $brGreen = $bc.ConvertFromString('#107C10')
-    $brGray050 = $bc.ConvertFromString('#F5F5F5')
+    $brInk = $bc.ConvertFromString($T.INK)
+    $brMuted = $bc.ConvertFromString($T.MUTED)
+    $brBorder = $bc.ConvertFromString($T.BORDER)
+    $brCard = $bc.ConvertFromString($T.CARD)
+    $brGreen = $bc.ConvertFromString($T.GREEN)
+    $brIconBg = $bc.ConvertFromString($T.ICONBG)
     $monoFont = New-Object System.Windows.Media.FontFamily('Cascadia Code, Consolas')
     $iconFont = New-Object System.Windows.Media.FontFamily('Segoe Fluent Icons, Segoe MDL2 Assets')
 
@@ -763,20 +795,20 @@ if ($alive) {
     $isAdmin = Test-IsAdmin
     if (-not $isAdmin) { $btnAdmin.Visibility = 'Visible' }
 
-    # Mica バックドロップ (Windows 11 22H2+)。失敗時/ダークテーマ時は Background=#F5F5F5 のまま
+    # Mica バックドロップ + ダークタイトルバー (Windows 11 22H2+)。失敗時は Background=%BG% のまま
     $window.Add_SourceInitialized({
             try {
                 $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
                 # DWM 既定のタイトルバー塗り (アクセント色) を無効化 (DWMWA_CAPTION_COLOR = COLOR_NONE)
                 $none = -2
                 [void][UnProcessTool.Dwm]::DwmSetWindowAttribute($helper.Handle, 35, [ref]$none, 4)
-                # ライトテーマ (DESIGN.md のトークンが前提) のときのみ Mica を有効化
-                $appsLight = 1
-                try {
-                    $appsLight = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop).AppsUseLightTheme
+                if ($script:IsDark -and $script:UseMica) {
+                    # dark Mica の色調に必要 (システムがダークのときのみ。単独で設定すると
+                    # システム描画のキャプションボタンが二重に出る副作用がある)
+                    $imm = 1  # DWMWA_USE_IMMERSIVE_DARK_MODE
+                    [void][UnProcessTool.Dwm]::DwmSetWindowAttribute($helper.Handle, 20, [ref]$imm, 4)
                 }
-                catch { }
-                if ($appsLight -eq 1) {
+                if ($script:UseMica) {
                     $val = 2  # DWMSBT_MAINWINDOW (Mica)
                     $ret = [UnProcessTool.Dwm]::DwmSetWindowAttribute($helper.Handle, 38, [ref]$val, 4)
                     if ($ret -eq 0) {
@@ -785,6 +817,9 @@ if ($alive) {
                         $window.Background = [System.Windows.Media.Brushes]::Transparent
                     }
                 }
+                # WindowStyle=None でも Windows 11 の角丸を維持する
+                $corner = 2  # DWMWCP_ROUND
+                [void][UnProcessTool.Dwm]::DwmSetWindowAttribute($helper.Handle, 33, [ref]$corner, 4)
             }
             catch { }
         })
@@ -857,7 +892,7 @@ if ($alive) {
         $circle = New-Object System.Windows.Controls.Border
         $circle.Width = 64; $circle.Height = 64
         $circle.CornerRadius = 32
-        $circle.Background = $brWhite
+        $circle.Background = $brCard
         $circle.BorderBrush = $brBorder
         $circle.BorderThickness = 1
         $circle.HorizontalAlignment = 'Center'
@@ -907,16 +942,40 @@ if ($alive) {
         }
     }
 
+    # 終了処理: ウィンドウなしプロセスは即強制終了 (高速)。
+    # ウィンドウ持ちアプリは WM_CLOSE で保存ダイアログの猶予を与え、
+    # 応答しない場合は自動では殺さず「強制終了」ボタンに切り替える (未保存データ保護)
     function Start-KillFor {
-        param([int]$KillPid)
+        param([int]$KillPid, [switch]$ForceNow)
         if ($script:Killing.ContainsKey($KillPid)) { return }
         $row = $script:RowByPid[$KillPid]
         if (-not $row) { return }
         $row.Btn.IsEnabled = $false
         $row.BtnLabel.Text = '終了中…'
         $row.FailText.Visibility = 'Collapsed'
-        $task = New-BgTask -ScriptText $killScript -ArgumentList @($KillPid)
-        $script:Killing[$KillPid] = @{ Row = $row; Task = $task }
+
+        $proc = Get-Process -Id $KillPid -ErrorAction SilentlyContinue
+        if (-not $proc) {
+            $script:Killing[$KillPid] = @{ Row = $row; Mode = 'wait'; Deadline = (Get-Date).AddSeconds(2) }
+            return
+        }
+        $hasWindow = ($proc.MainWindowHandle -ne [IntPtr]::Zero)
+        if ($hasWindow -and -not $ForceNow) {
+            [void]$proc.CloseMainWindow()
+            $script:Killing[$KillPid] = @{ Row = $row; Mode = 'graceful'; Deadline = (Get-Date).AddSeconds(3) }
+        }
+        else {
+            try {
+                Stop-Process -Id $KillPid -Force -ErrorAction Stop
+                $script:Killing[$KillPid] = @{ Row = $row; Mode = 'wait'; Deadline = (Get-Date).AddSeconds(5) }
+            }
+            catch {
+                $row.FailText.Text = '終了できませんでした（管理者権限が必要かもしれません）'
+                $row.FailText.Visibility = 'Visible'
+                $row.BtnLabel.Text = '再試行'
+                $row.Btn.IsEnabled = $true
+            }
+        }
     }
 
     function Get-ExeIconImage {
@@ -941,7 +1000,7 @@ if ($alive) {
     function New-ProcRow {
         param($Info)
         $card = New-Object System.Windows.Controls.Border
-        $card.Background = $brWhite
+        $card.Background = $brCard
         $card.BorderBrush = $brBorder
         $card.BorderThickness = 1
         $card.CornerRadius = 12
@@ -973,7 +1032,7 @@ if ($alive) {
         $iconHolder = New-Object System.Windows.Controls.Border
         $iconHolder.Width = 36; $iconHolder.Height = 36
         $iconHolder.CornerRadius = 8
-        $iconHolder.Background = $brGray050
+        $iconHolder.Background = $brIconBg
         $iconHolder.VerticalAlignment = 'Top'
         $iconHolder.Margin = New-Object System.Windows.Thickness(0, 0, 12, 0)
         $img = Get-ExeIconImage -ExePath $Info.ExePath
@@ -1026,7 +1085,7 @@ if ($alive) {
             [void]$left.Children.Add($exeTb)
         }
 
-        $failText = New-Tb -Text '終了できませんでした（管理者権限が必要かもしれません）' -Size 12 -Brush $brMuted
+        $failText = New-Tb -Text '' -Size 12 -Brush $brMuted
         $failText.Margin = New-Object System.Windows.Thickness(0, 6, 0, 0)
         $failText.Visibility = 'Collapsed'
         [void]$left.Children.Add($failText)
@@ -1059,7 +1118,9 @@ if ($alive) {
         $btn.Tag = [int]$Info.Pid
         $btn.Add_Click({
                 param($s, $e)
-                Start-KillFor -KillPid ([int]$s.Tag)
+                $r = $script:RowByPid[[int]$s.Tag]
+                $force = [bool]($r -and $r.ContainsKey('NeedsForce') -and $r.NeedsForce)
+                Start-KillFor -KillPid ([int]$s.Tag) -ForceNow:$force
             })
         [System.Windows.Controls.Grid]::SetColumn($btn, 2)
         [void]$grid.Children.Add($btn)
@@ -1082,7 +1143,7 @@ if ($alive) {
         [void](New-BgTask -ScriptText $scanScript -ArgumentList @($script:Sync, $targetPath))
     }
 
-    function Render-ScanResult {
+    function Show-ScanResult {
         $sync = $script:Sync
         $scanProgress.Visibility = 'Collapsed'
         if ($sync.ScanError) {
@@ -1109,7 +1170,7 @@ if ($alive) {
         }
     }
 
-    function Render-FileMap {
+    function Show-FileMap {
         $sync = $script:Sync
         $map = $sync.FileMap
         $root = $targetPath.TrimEnd('\') + '\'
@@ -1147,7 +1208,7 @@ if ($alive) {
     $btnRefresh.Add_Click({ Start-Scan })
 
     $btnAdmin.Add_Click({
-            $argList = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Gui -Path "{1}"' -f $PSCommandPath, $targetPath)
+            $argList = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Gui -Theme {1} -Path "{2}"' -f $PSCommandPath, $Theme, $targetPath)
             try {
                 Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -WindowStyle Hidden
                 $window.Close()
@@ -1161,18 +1222,18 @@ if ($alive) {
 
     # ---- ポーリングタイマー (バックグラウンド結果の反映とプロセス生存監視) ----
     $timer = New-Object System.Windows.Threading.DispatcherTimer
-    $timer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $timer.Interval = [TimeSpan]::FromMilliseconds(150)
     $timer.Add_Tick({
             $sync = $script:Sync
             if (-not $sync) { return }
 
             if ($sync.ScanDone -and -not $script:Rendered) {
                 $script:Rendered = $true
-                Render-ScanResult
+                Show-ScanResult
             }
             if ($sync.FileMapDone -and -not $script:FilesRendered -and $script:Rendered) {
                 $script:FilesRendered = $true
-                Render-FileMap
+                Show-FileMap
             }
 
             foreach ($killPid in @($script:Killing.Keys)) {
@@ -1190,11 +1251,19 @@ if ($alive) {
                     }
                     Update-Status
                 }
-                elseif ($k.Task.Handle.IsCompleted) {
-                    # graceful + 強制の両方が済んでもまだ生きている -> 権限不足など
-                    $k.Row.BtnLabel.Text = '再試行'
-                    $k.Row.Btn.IsEnabled = $true
+                elseif ((Get-Date) -gt $k.Deadline) {
+                    if ($k.Mode -eq 'graceful') {
+                        # 閉じる要求に応答しない -> 自動では殺さず、ユーザーの明示操作で強制終了
+                        $k.Row.NeedsForce = $true
+                        $k.Row.BtnLabel.Text = '強制終了'
+                        $k.Row.FailText.Text = '閉じる要求に応答していません（保存ダイアログ等の可能性）。「強制終了」で終了できます'
+                    }
+                    else {
+                        $k.Row.BtnLabel.Text = '再試行'
+                        $k.Row.FailText.Text = '終了を確認できませんでした'
+                    }
                     $k.Row.FailText.Visibility = 'Visible'
+                    $k.Row.Btn.IsEnabled = $true
                     $script:Killing.Remove($killPid)
                 }
             }
@@ -1219,7 +1288,6 @@ if ($alive) {
     [void]$window.ShowDialog()
     exit 0
 }
-
 if ($Gui) { Show-Gui }
 
 # ============================================================================

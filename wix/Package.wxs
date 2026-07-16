@@ -54,13 +54,18 @@
         <File Id="ReadmeMd" Source="$(sys.SOURCEFILEDIR)..\README.md" />
       </Component>
 
+      <Component Id="GuiLauncher" Guid="5C5E4C32-B9F5-4B99-94AF-0B8D878D6C14">
+        <RegistryValue Root="HKCU" Key="Software\namiton\UnProcessTool\Components" Name="GuiLauncher" Type="integer" Value="1" KeyPath="yes" />
+        <File Id="LaunchGuiVbs" Source="$(sys.SOURCEFILEDIR)..\LaunchGui.vbs" />
+      </Component>
+
       <!-- 右クリックメニュー: 全ファイル (*) -->
       <Component Id="ContextMenuAllFiles">
         <RegistryKey Root="HKCU" Key="Software\Classes\*\shell\UnProcessTool">
           <RegistryValue Type="string" Value="ロックしているプロセスを調査 (UnProcessTool)" KeyPath="yes" />
           <RegistryValue Name="Icon" Type="string" Value="taskmgr.exe" />
           <RegistryKey Key="command">
-            <RegistryValue Type="string" Value="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]UnProcessTool.ps1&quot; -Pause -Path &quot;%1&quot;" />
+            <RegistryValue Type="string" Value="wscript.exe &quot;[INSTALLFOLDER]LaunchGui.vbs&quot; &quot;%1&quot;" />
           </RegistryKey>
         </RegistryKey>
       </Component>
@@ -71,7 +76,7 @@
           <RegistryValue Type="string" Value="ロックしているプロセスを調査 (UnProcessTool)" KeyPath="yes" />
           <RegistryValue Name="Icon" Type="string" Value="taskmgr.exe" />
           <RegistryKey Key="command">
-            <RegistryValue Type="string" Value="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]UnProcessTool.ps1&quot; -Pause -Path &quot;%1&quot;" />
+            <RegistryValue Type="string" Value="wscript.exe &quot;[INSTALLFOLDER]LaunchGui.vbs&quot; &quot;%1&quot;" />
           </RegistryKey>
         </RegistryKey>
       </Component>

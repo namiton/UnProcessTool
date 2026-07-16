@@ -3,13 +3,14 @@
 # HKCU のみ変更するため管理者権限は不要
 $ErrorActionPreference = 'Stop'
 
-$toolPath = Join-Path $PSScriptRoot 'UnProcessTool.ps1'
-if (-not (Test-Path -LiteralPath $toolPath)) {
-    throw "UnProcessTool.ps1 が見つかりません: $toolPath"
+$launcherPath = Join-Path $PSScriptRoot 'LaunchGui.vbs'
+if (-not (Test-Path -LiteralPath $launcherPath)) {
+    throw "LaunchGui.vbs が見つかりません: $launcherPath"
 }
 
 $menuText = 'ロックしているプロセスを調査 (UnProcessTool)'
-$command  = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Pause -Path "%1"' -f $toolPath
+# wscript 経由でコンソールウィンドウなしに GUI を起動する
+$command  = 'wscript.exe "{0}" "%1"' -f $launcherPath
 
 # '*' = 全ファイル, 'Directory' = フォルダ
 foreach ($class in @('*', 'Directory')) {

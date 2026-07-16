@@ -5,6 +5,9 @@
 このエラーの原因プロセスを特定し、選択して終了する PowerShell ツール。
 Windows 標準の **Restart Manager API** (`rstrtmgr.dll`) を使うため、handle.exe などの外部ツールのインストールは不要。
 
+右クリックメニューから PowerToys の File Locksmith 風の **GUI** が開き、
+プロセスごとに「誰が・どのファイルを・どの方法で」掴んでいるかを確認して、ボタンひとつで終了できる。
+
 ## インストール（推奨: MSI）
 
 [Releases](https://github.com/namiton/UnProcessTool/releases) から最新の `UnProcessTool-x.y.z.msi` をダウンロードして実行する。
@@ -22,7 +25,8 @@ Windows 標準の **Restart Manager API** (`rstrtmgr.dll`) を使うため、han
 
 | ファイル | 役割 |
 |---|---|
-| `UnProcessTool.ps1` | 本体。ロック元プロセスの検出・一覧表示・終了 |
+| `UnProcessTool.ps1` | 本体。GUI (`-Gui`) とコンソールの両モードでロック元プロセスの検出・終了 |
+| `LaunchGui.vbs` | コンテキストメニュー用ランチャー（コンソールウィンドウなしで GUI を起動） |
 | `Install-ContextMenu.ps1` | 右クリックメニューに登録（MSI を使わない場合の手動登録用） |
 | `Uninstall-ContextMenu.ps1` | 右クリックメニューから削除（手動登録の解除用） |
 | `wix/Package.wxs` | MSI 定義（WiX v5） |
@@ -42,9 +46,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "d:\OriginalTool\UnProcessTo
 
 解除は `Uninstall-ContextMenu.ps1` を実行。
 
+## GUI（右クリックメニューから起動）
+
+右クリック → 「ロックしているプロセスを調査 (UnProcessTool)」で File Locksmith 風の GUI が開く：
+
+- ロック元プロセスをカード表示（プロセス名 / PID / ユーザー / ロック方法 / 実行ファイルパス）
+- **「ロック中のファイル」を展開すると、そのプロセスが掴んでいるファイルを特定して表示**（二分探索による絞り込み）
+- 「タスクの終了」ボタン: まず通常終了（保存ダイアログを出せる graceful shutdown）→ 4 秒で終了しなければ自動で強制終了
+- 「すべて終了」「更新」「管理者として再実行」（権限不足のプロセスがある場合）
+- スキャンや終了処理はバックグラウンド実行で、UI は固まらない
+
 ## コマンドラインでの使い方
 
 ```powershell
+# GUI モード
+.\UnProcessTool.ps1 -Path "D:\MyProject\Binaries\Win64" -Gui
+
 # 対話モード: ロック元を一覧表示し、番号選択で終了
 .\UnProcessTool.ps1 -Path "D:\MyProject\Binaries\Win64"
 
@@ -58,9 +75,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "d:\OriginalTool\UnProcessTo
 | パラメータ | 説明 |
 |---|---|
 | `-Path` | 対象のファイルまたはフォルダ。フォルダの場合は配下のファイルを再帰的に検査（上限 3000 件） |
-| `-ListOnly` | 検出のみで終了しない |
-| `-Force` | 確認プロンプトなしで全プロセスを終了 |
-| `-Pause` | 終了前に Enter 待ち（コンテキストメニュー起動用） |
+| `-Gui` | GUI (WPF) で表示。コンテキストメニューからはこのモードで起動される |
+| `-ListOnly` | 検出のみで終了しない（コンソールモード） |
+| `-Force` | 確認プロンプトなしで全プロセスを終了（コンソールモード） |
+| `-Pause` | 終了前に Enter 待ち（コンソールモード） |
 
 ## 動作の特徴
 
